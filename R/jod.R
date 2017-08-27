@@ -1,40 +1,51 @@
+
 #' Joint Optimal Design
 #'
-#' @param dados A geodata object containing the initial sample
-#' @param k número de pontos que quero adicionar à minha amostra
-#' @param kcontrol controle pro kriging
-#' @param malha malha de krigagem, é o kgrid
-#' @param J n de gerações
-#' @param G tamanho de cada geração
-#' @param m n de amostras na elite. tem q ser <= G div 2 e >0 (botar p todos)
+#' Given a set of georeferenced measurements, this function finds 'add.pts' new
+#' locations for sampling, calculated jointly using a GA-based heuristic.
+#'
+#' @param geodata A geodata object containing the initial sample
+#' @param add.pts Number of points to be added to the initial sample
+#' @param kcontrol Parameters for kriging as a krige.geoR object.
+#' See the help for krige.control for further details
+#' @param kgrid malha de krigagem. TODO mudar isso! botar
+#' pra ser definido por 'n', que nem no SOD
+#' @param num.gen Number of generations (iterations)
+#' @param gen.size Number of samples in each iteration
+#' @param elite.size Number of samples in elite. Should be lesser than or
+#' equal to gen.size \%/\% 2 TODO escrever isso direito
+#'
+#' @return A list with all of the generations and values of the utility function
+#' which can be plotted as shown in the examples. TODO RETORNAR SÓ A ÚLTIMA
 #'
 #' @examples
-#' k <- 4 # número de pontos que quero adicionar à minha amostra
-#' NN <- 10 # n de pontos em um lado da malha de krigagem
-#' N <- 15 # n de dados iniciais - para a simulação
-#' G <- 10 # n de elementos em cada geração do AG
-#' m <- 4 # n de amostras na elite
-#' J <- 500 # n de gerações
+#' add.pts <- 4 # Number of points to be added
+#' n <- 10 # Number of points to define the candidate grid
+#' N <- 15 # Number of points for the simulation
+#' gen.size <- 10 # Number of samples in each iteration
+#' elite.size <- 4 # Number of samples in elite
+#' num.gen <- 50 # Number of generations (iterations)
 #'
 #' library(geoR)
 #'
 #' set.seed(400)
-#' dados <- grf(N, cov.pars = c(20, 0.45), nugget = 1)
-#' beta1 <- mean(dados$data)
-#' emv <- ajemv(dados,ini.phi = 0.4,ini.sigma2 = 10, pepita = 1,
+#' geodata <- grf(N, cov.pars = c(20, 0.45), nugget = 1)
+#' beta1 <- mean(geodata$data)
+#' emv <- ajemv(geodata,ini.phi = 0.4,ini.sigma2 = 10, pepita = 1,
 #'              modelo = 'exponential', plot = F)
 #' kcontrol <- krige.control(type.krige = "SK",
 #'                           trend.d = "cte",
 #'                           nugget = emv$tausq,
 #'                           beta = beta1,
 #'                           cov.pars = emv$cov.pars)
-#' malha <- expand.grid(seq(0, 1, l = NN), seq(0, 1, l = NN))
+#' kgrid <- expand.grid(seq(0, 1, l = n), seq(0, 1, l = n))
 #'
-#' novosfilhos <- JOD(dados, 5, kcontrol, malha, 500, 10, 4)
+#' newsample <- JOD(geodata, add.pts, kcontrol, kgrid, num.gen, gen.size,
+#' elite.size)
 #'
 #' utili <- NULL
-#' for(i in 1:J) utili[i] = mean(novosfilhos$utilidades[[i]][1])
-#' plot(1:J, utili[1:J], type='l')
+#' for(i in 1:num.gen) utili[i] <- mean(newsample$utilidades[[i]][1])
+#' plot(1:num.gen, utili[1:num.gen], type='l')
 #'
 #' @importFrom foreach foreach
 #' @importFrom foreach %dopar%
@@ -44,99 +55,100 @@
 #' @importFrom geoR krige.conv
 #'
 #' @export
-JOD <- function(dados, k, kcontrol, malha, J, G, m, parallel = T) {
+JOD <- function(geodata, add.pts, kcontrol, kgrid, num.gen,
+                gen.size, elite.size, parallel = T) {
 
     if (parallel) {
         cl <- makeCluster(c("localhost", "localhost"), "SOCK")
         registerDoSNOW(cl)
     }
 
-    stopifnot(m <= G%/%2)
+    stopifnot(elite.size <= gen.size%/%2)
 
-    N <- length(dados$data)
+    N <- length(geodata$data)
 
-    xmin <- min(dados$coords[,1])
-    ymin <- min(dados$coords[,2])
-    xmax <- max(dados$coords[,1])
-    ymax <- max(dados$coords[,2])
+    xmin <- min(geodata$coords[,1])
+    ymin <- min(geodata$coords[,2])
+    xmax <- max(geodata$coords[,1])
+    ymax <- max(geodata$coords[,2])
 
-    krigeagem <- krige.conv(dados, locations = malha,
+    or.krig <- krige.conv(geodata, locations = kgrid,
                             krige = kcontrol)
 
-    filhotes <- vector("list", G)
-    for (i in 1:G) {
-        ptos.x <- runif(k, min = xmin, max = xmax)
-        ptos.y <- runif(k, min = ymin, max = ymax)
-        coords.ptos.novos <- matrix(c(ptos.x, ptos.y), nrow = k)
-        amostra.dados <- append(dados$data, numeric(k))
-        names(coords.ptos.novos) <- c("x", "y")
-        amostra.coords <- rbind(dados$coords, coords.ptos.novos)
-        rownames(amostra.coords) <- NULL
-        rownames(coords.ptos.novos) <- NULL
-        filhotes[[i]] <- as.geodata(cbind(amostra.coords, amostra.dados))
+    children <- vector("list", gen.size)
+    for (i in 1:gen.size) {
+        pts.x <- runif(add.pts, min = xmin, max = xmax)
+        pts.y <- runif(add.pts, min = ymin, max = ymax)
+        new.pt.coord <- matrix(c(pts.x, pts.y), nrow = add.pts)
+        sample.data <- append(geodata$data, numeric(add.pts))
+        names(new.pt.coord) <- c("x", "y")
+        sample.coord <- rbind(geodata$coords, new.pt.coord)
+        rownames(sample.coord) <- NULL
+        rownames(new.pt.coord) <- NULL
+        children[[i]] <- as.geodata(cbind(sample.coord, sample.data))
     }
 
-    #lista.amostras é como se fosse o 'filhotes' da 1a geração
-    #Pelo amor de deus não esquecer de mudar o '0' ali (numeric(k)) na hr de
+    #lista.amostras é como se fosse o 'children' da 1a geração
+    #Pelo amor de deus não esquecer de mudar o '0' ali (numeric(add.pts)) na hr de
     #fazer a outra fç utilidade!!
 
-    filhotes.it <- utilidades.it <- vector('list', J)
+    children.it <- util.it <- vector('list', num.gen)
 
-    for (kk in 1:J){
-        lista.krigagens <- vector("list", G)
-        u.varpred <- foreach(i = 1:G, .packages = 'geoR', .combine = "c") %dopar% {
-            lista.krigagens[[i]] <- krige.conv(filhotes[[i]], locations = malha,
+    for (kk in 1:num.gen){
+        krig.list <- vector("list", gen.size)
+        predvar.util <- foreach(i = 1:gen.size, .packages = 'geoR', .combine = "c") %dopar% {
+            krig.list[[i]] <- krige.conv(children[[i]], locations = kgrid,
                                                krige = kcontrol)
-            mean((krigeagem$krige.var -
-                      lista.krigagens[[i]]$krige.var)/krigeagem$krige.var)
+            mean((or.krig$krige.var -
+                      krig.list[[i]]$krige.var)/or.krig$krige.var)
         }
 
-        ordem <- order(-u.varpred)
-        lista.rankeada <- list()
-        for (i in 1:G) {
-            lista.rankeada[[i]] <- filhotes[[ordem[i]]]
+        util.order <- order(-predvar.util)
+        ranked.list <- list()
+        for (i in 1:gen.size) {
+            ranked.list[[i]] <- children[[util.order[i]]]
         }
-        utilidades.it[[kk]] <- u.varpred[ordem]
+        util.it[[kk]] <- predvar.util[util.order]
 
         ##### P5, P6, P7.1 e P7.2 #####
 
-        filhotes <- vector('list', G)
+        children <- vector('list', gen.size)
 
-        for (i in 1:m) {
-            filhotes[[i]] <- lista.rankeada[[i]]
+        for (i in 1:elite.size) {
+            children[[i]] <- ranked.list[[i]]
 
-            escolhidos <- sample((N+1):(N+k), k%/%2 + if (k%%2 != 0) 1 else 0)
-            ptos.escolhidos <- filhotes[[i]]$coords[escolhidos,]
+            chosen <- sample((N+1):(N+add.pts), add.pts%/%2 + if (add.pts%%2 != 0) 1 else 0)
+            chosen.pts <- children[[i]]$coords[chosen,]
 
-            ptos.x <- runif(k%/%2, min = xmin, max = xmax) #2 pontos sao aleatorios
-            ptos.y <- runif(k%/%2, min = ymin, max = ymax)
-            ptos.aleatorios <- cbind(ptos.x, ptos.y)
+            pts.x <- runif(add.pts%/%2, min = xmin, max = xmax) #2 pontos sao aleatorios
+            pts.y <- runif(add.pts%/%2, min = ymin, max = ymax)
+            random.pts <- cbind(pts.x, pts.y)
 
-            names(ptos.escolhidos) <- names(ptos.aleatorios) <- c("x", "y")
-            ptos <- rbind(ptos.escolhidos, ptos.aleatorios)
+            names(chosen.pts) <- names(random.pts) <- c("x", "y")
+            pts <- rbind(chosen.pts, random.pts)
 
-            filhote.dados <- c(dados$data, numeric(k))
-            filhote.coords <- rbind(dados$coords, ptos)
-            rownames(filhote.coords) <- rownames(filhote.dados) <- NULL
-            filhotes[[m+i]] <- as.geodata(cbind(filhote.coords, filhote.dados))
+            children.data <- c(geodata$data, numeric(add.pts))
+            children.coord <- rbind(geodata$coords, pts)
+            rownames(children.coord) <- rownames(children.data) <- NULL
+            children[[elite.size+i]] <- as.geodata(cbind(children.coord, children.data))
         }
 
-        for (i in (2*m):G) {
-            ptos.x <- runif(k, min = xmin, max = xmax)
-            ptos.y <- runif(k, min = ymin, max = ymax)
-            ptos.aleatorios <- cbind(ptos.x,ptos.y)
-            names(ptos.aleatorios) <- c("x", "y")
+        for (i in (2*elite.size):gen.size) {
+            pts.x <- runif(add.pts, min = xmin, max = xmax)
+            pts.y <- runif(add.pts, min = ymin, max = ymax)
+            random.pts <- cbind(pts.x, pts.y)
+            names(random.pts) <- c("x", "y")
 
-            filhote.dados <- c(dados$data, numeric(k))
-            filhote.coords <- rbind(dados$coords, ptos.aleatorios)
-            rownames(filhote.coords) <- rownames(filhote.dados) <- NULL
-            filhotes[[i]] <- as.geodata(cbind(filhote.coords, filhote.dados))
+            children.data <- c(geodata$data, numeric(add.pts))
+            children.coord <- rbind(geodata$coords, random.pts)
+            rownames(children.coord) <- rownames(children.data) <- NULL
+            children[[i]] <- as.geodata(cbind(children.coord, children.data))
         }
 
-        filhotes.it[[kk]] <- filhotes
+        children.it[[kk]] <- children
     }
 
     if(parallel) stopCluster(cl)
 
-    list(filhotes = filhotes.it, utilidades = utilidades.it)
+    list(children = children.it, utilidades = util.it)
 }

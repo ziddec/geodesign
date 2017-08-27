@@ -4,13 +4,13 @@
 \alias{SOD}
 \title{Sequential Optimal Design}
 \usage{
-SOD(geodata, addpts, n = ceiling(sqrt(10 * nrow(geodata$coords))), util,
+SOD(geodata, add.pts, n = ceiling(sqrt(10 * nrow(geodata$coords))), util,
   kcontrol, parallel = T, qtl = 0.75, p = 0.5, shape = NULL)
 }
 \arguments{
 \item{geodata}{A geodata object containing the initial sample}
 
-\item{addpts}{Number of points to be added to the initial sample}
+\item{add.pts}{Number of points to be added to the initial sample}
 
 \item{n}{Number of points in the sides of the candidate grid. If a vector
 of length 1, both sides of the grid will have the same number of points. If
@@ -44,7 +44,7 @@ candidate grid}
 Coordinates of the new sampling locations
 }
 \description{
-Given a set of georeferenced measurements, this function finds the `addpts`
+Given a set of georeferenced measurements, this function finds the `add.pts`
 optimal locations for sampling.
 }
 \details{
@@ -58,7 +58,7 @@ extreme observations utility function.
 \examples{
 library(geoR)
 
-addpts <- 10 # Number of points to be added
+add.pts <- 10 # Number of points to be added
 n <- 10 # Number of points to define the candidate grid
 N <- 15 # Number of points for the simulation (only for testing)
 qtl <- 0.75
@@ -72,11 +72,10 @@ simdata <- grf(N, cov.pars = c(20, 0.45), nug  =  1)
 
 beta1 <- mean(simdata$data)
 m1 <- as.matrix(simdata$coords)
-maxdist <- max(dist(m1))
 emv <- ajemv(simdata, ini.phi = 0.4, plot = F,
              ini.sigma2 = 10, pepita = 1, modelo = 'exponential')
 
-new.pts <- SOD(simdata, addpts, n, util = 'predvar',
+new.pts <- SOD(simdata, add.pts, n, util = 'predvar',
                kcontrol = krige.control(type.krige = "SK",
                                         trend.d = "cte",
                                         nugget = emv$tausq,

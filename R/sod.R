@@ -1,11 +1,11 @@
 
 #' Sequential Optimal Design
 #'
-#' Given a set of georeferenced measurements, this function finds the `addpts`
+#' Given a set of georeferenced measurements, this function finds the `add.pts`
 #' optimal locations for sampling.
 #'
 #' @param geodata A geodata object containing the initial sample
-#' @param addpts Number of points to be added to the initial sample
+#' @param add.pts Number of points to be added to the initial sample
 #' @param n Number of points in the sides of the candidate grid. If a vector
 #' of length 1, both sides of the grid will have the same number of points. If
 #' a vector of length 2, the first value indicates the number of points along
@@ -41,7 +41,7 @@
 #' @examples
 #' library(geoR)
 #'
-#' addpts <- 10 # Number of points to be added
+#' add.pts <- 10 # Number of points to be added
 #' n <- 10 # Number of points to define the candidate grid
 #' N <- 15 # Number of points for the simulation (only for testing)
 #' qtl <- 0.75
@@ -55,11 +55,10 @@
 #'
 #' beta1 <- mean(simdata$data)
 #' m1 <- as.matrix(simdata$coords)
-#' maxdist <- max(dist(m1))
 #' emv <- ajemv(simdata, ini.phi = 0.4, plot = F,
 #'              ini.sigma2 = 10, pepita = 1, modelo = 'exponential')
 #'
-#' new.pts <- SOD(simdata, addpts, n, util = 'predvar',
+#' new.pts <- SOD(simdata, add.pts, n, util = 'predvar',
 #'                kcontrol = krige.control(type.krige = "SK",
 #'                                         trend.d = "cte",
 #'                                         nugget = emv$tausq,
@@ -85,14 +84,14 @@
 #'
 #'
 #' @export
-SOD <- function(geodata, addpts, n = ceiling(sqrt(10*nrow(geodata$coords))),
+SOD <- function(geodata, add.pts, n = ceiling(sqrt(10*nrow(geodata$coords))),
                 util, kcontrol, parallel = T, qtl = 0.75, p = 0.5, shape = NULL) {
 
     if (!("geodata" %in% class(geodata)))
         stop("Expected first argument to be a geodata")
 
-    if (mode(addpts) != "numeric" || addpts <= 0)
-        stop("Invalid value for `addpts`")
+    if (mode(add.pts) != "numeric" || add.pts <= 0)
+        stop("Invalid value for `add.pts`")
 
     if (mode(n) != "numeric")
         stop("Expected `n` to be numeric")
@@ -160,13 +159,13 @@ SOD <- function(geodata, addpts, n = ceiling(sqrt(10*nrow(geodata$coords))),
         it.predvar.util <- list() # predictive variance utility f.
         best.pt <- NULL
 
-        for (g in 1:(addpts)) {
+        for (g in 1:(add.pts)) {
             cat(sprintf("Iteration %d out of %d%s\n",
-                        g, addpts, if (g == addpts) "! Yay!" else ""))
+                        g, add.pts, if (g == add.pts) "! Yay!" else ""))
 
             # "Original" kriging (to be compared with krigings at each point)
             capture.output(
-                orkrig <- krige.conv(geodata, locations = kgrid,
+                or.krig <- krige.conv(geodata, locations = kgrid,
                                      krige = kcontrol)
             )
 
@@ -207,7 +206,7 @@ SOD <- function(geodata, addpts, n = ceiling(sqrt(10*nrow(geodata$coords))),
                         krig.list[[i]] <- krige.conv(geodata.list[[i]], locations = kgrid,
                                                      krige = kcontrol)
                     )
-                    predvar.util <- mean(orkrig$krige.var - krig.list[[i]]$krige.var)
+                    predvar.util <- mean(or.krig$krige.var - krig.list[[i]]$krige.var)
                     df.list[[i]] <- 0
                     krig.list[[i]] <- 0
                     geodata.list[[i]] <- 0
@@ -225,7 +224,7 @@ SOD <- function(geodata, addpts, n = ceiling(sqrt(10*nrow(geodata$coords))),
                             krig.list[[i]] <- krige.conv(geodata.list[[i]], locations = kgrid,
                                                          krige = kcontrol)
                         )
-                        predvar.util <- mean(orkrig$krige.var - krig.list[[i]]$krige.var)
+                        predvar.util <- mean(or.krig$krige.var - krig.list[[i]]$krige.var)
                         df.list[[i]] <- 0
                         krig.list[[i]] <- 0
                         geodata.list[[i]] <- 0
@@ -263,7 +262,7 @@ SOD <- function(geodata, addpts, n = ceiling(sqrt(10*nrow(geodata$coords))),
 
             # Point coordinates and value
             best.coord <- cgrid[best.pt,]
-            best.value <- orkrig$predict[best.pt]
+            best.value <- or.krig$predict[best.pt]
 
             # Merges data with optimal point
             geodata$data <- c(geodata$data, best.value[g])
@@ -278,14 +277,14 @@ SOD <- function(geodata, addpts, n = ceiling(sqrt(10*nrow(geodata$coords))),
         it.extrprob.util <- list() # extreme probabilities utility f
         best.pt <- NULL
 
-        for (g in 1:(addpts)) {
+        for (g in 1:(add.pts)) {
             cat(sprintf("Iteration %d out of %d%s\n",
-                        g, addpts, if (g == addpts) "! Yay!" else ""))
+                        g, add.pts, if (g == add.pts) "! Yay!" else ""))
 
             # "Original" kriging (to be compared with krigings at each point)
 
             capture.output(
-                orkrig <- krige.conv(geodata, locations = kgrid,
+                or.krig <- krige.conv(geodata, locations = kgrid,
                                      krige = kcontrol)
             )
 
@@ -315,8 +314,8 @@ SOD <- function(geodata, addpts, n = ceiling(sqrt(10*nrow(geodata$coords))),
             tolerance <- quantile(geodata$data, qtl)
 
             for (i in 1:(nx*ny)) {
-                extrprob.util[i] <- (1 - pnorm(tolerance, sd = sqrt(orkrig$krige.var[i]),
-                                               mean = orkrig$predict[i]))^2
+                extrprob.util[i] <- (1 - pnorm(tolerance, sd = sqrt(or.krig$krige.var[i]),
+                                               mean = or.krig$predict[i]))^2
                 # "probability of value in point i being greater than the tolerance"
             }
 
@@ -333,7 +332,7 @@ SOD <- function(geodata, addpts, n = ceiling(sqrt(10*nrow(geodata$coords))),
 
             # Point coordinates and value
             best.coord <- cgrid[best.pt,]
-            best.value <- orkrig$predict[best.pt]
+            best.value <- or.krig$predict[best.pt]
             colnames(best.coord) <- c("x", "y")
 
             # Merges geodata with optimal point
@@ -350,13 +349,13 @@ SOD <- function(geodata, addpts, n = ceiling(sqrt(10*nrow(geodata$coords))),
         it.mixed.util <- list() # mixed utility f.
         best.pt <- NULL
 
-        for (g in 1:(addpts)) {
+        for (g in 1:(add.pts)) {
             cat(sprintf("Iteration %d out of %d%s\n",
-                        g, addpts, if (g == addpts) "! Yay!" else ""))
+                        g, add.pts, if (g == add.pts) "! Yay!" else ""))
 
             # "Original" kriging (to be compared with krigings at each point)
             capture.output(
-                orkrig <- krige.conv(geodata, locations = kgrid,
+                or.krig <- krige.conv(geodata, locations = kgrid,
                                      krige = kcontrol)
             )
 
@@ -397,7 +396,7 @@ SOD <- function(geodata, addpts, n = ceiling(sqrt(10*nrow(geodata$coords))),
                         krig.list[[i]] <- krige.conv(geodata.list[[i]], locations = kgrid,
                                                      krige = kcontrol)
                     )
-                    predvar.util <- mean(orkrig$krige.var - krig.list[[i]]$krige.var)
+                    predvar.util <- mean(or.krig$krige.var - krig.list[[i]]$krige.var)
                     df.list[[i]] <- 0
                     krig.list[[i]] <- 0
                     geodata.list[[i]] <- 0
@@ -415,7 +414,7 @@ SOD <- function(geodata, addpts, n = ceiling(sqrt(10*nrow(geodata$coords))),
                             krig.list[[i]] <- krige.conv(geodata.list[[i]], locations = kgrid,
                                                          krige = kcontrol)
                         )
-                        predvar.util <- mean(orkrig$krige.var - krig.list[[i]]$krige.var)
+                        predvar.util <- mean(or.krig$krige.var - krig.list[[i]]$krige.var)
                         df.list[[i]] <- 0
                         krig.list[[i]] <- 0
                         geodata.list[[i]] <- 0
@@ -453,8 +452,8 @@ SOD <- function(geodata, addpts, n = ceiling(sqrt(10*nrow(geodata$coords))),
             tolerance <- quantile(geodata$data, qtl)
 
             for (i in 1:(nx * ny)) {
-                extrprob.util[i] <- (1 - pnorm(tolerance, sd = sqrt(orkrig$krige.var[i]),
-                                               mean = orkrig$predict[i]))^2
+                extrprob.util[i] <- (1 - pnorm(tolerance, sd = sqrt(or.krig$krige.var[i]),
+                                               mean = or.krig$predict[i]))^2
                 # "probability of value in point i being greater than the tolerance"
             }
 
@@ -480,7 +479,7 @@ SOD <- function(geodata, addpts, n = ceiling(sqrt(10*nrow(geodata$coords))),
 
             # Point coordinates and value
             best.coord <- cgrid[best.pt,]
-            best.value <- orkrig$predict[best.pt]
+            best.value <- or.krig$predict[best.pt]
 
             # Merges data with optimal point
             geodata$data <- c(geodata$data, best.value[g])
@@ -498,5 +497,5 @@ SOD <- function(geodata, addpts, n = ceiling(sqrt(10*nrow(geodata$coords))),
             util.evolution <- it.mixed.util
 
     nc <- nrow(geodata$coords)
-    geodata$coords[(nc - addpts + 1):nc,]
+    geodata$coords[(nc - add.pts + 1):nc,]
 }
