@@ -82,9 +82,21 @@ new.pts <- SOD(simdata, add.pts, n, util = 'predvar',
                                         beta = mean(simdata$data),
                                         cov.pars = emv$cov.pars),
                parallel = F)
+new.pts.bayes <- SOD(simdata, add.pts, n, util = 'predvar',
+                     kcontrol = prior.control(beta.prior = "flat",
+                                              sigmasq.prior = "reciprocal",
+                                              phi.prior="uniform",
+                                              phi.discrete=seq(0,2,l=20),
+                                              tausq.rel.prior = "uniform",
+                                              tausq.rel.discrete = seq(0, 1, l=20)),
+                     parallel = F)
 
 # Old points and new points
-plot(simdata$coords, pch = 16)
+par(mfrow = c(1, 2))
+plot(simdata$coords, pch = 16, main = 'Classical kriging')
 points(new.pts, pch = '+', col = 'red')
+plot(simdata$coords, pch = 16, main = 'Bayesian kriging')
+points(new.pts.bayes, pch = '+', col = 'red')
+par(mfrow = c(1, 1))
 
 }

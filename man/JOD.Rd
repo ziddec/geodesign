@@ -58,8 +58,6 @@ kgrid <- expand.grid(seq(0, 1, l = n), seq(0, 1, l = n))
 newsample <- JOD(geodata, add.pts, kcontrol, kgrid, num.gen, gen.size,
 elite.size)
 
-utili <- NULL
-for(i in 1:num.gen) utili[i] <- mean(newsample$utilidades[[i]][1])
-plot(1:num.gen, utili[1:num.gen], type='l')
+plot(newsample)
 
 }

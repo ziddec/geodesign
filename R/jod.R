@@ -43,9 +43,7 @@
 #' newsample <- JOD(geodata, add.pts, kcontrol, kgrid, num.gen, gen.size,
 #' elite.size)
 #'
-#' utili <- NULL
-#' for(i in 1:num.gen) utili[i] <- mean(newsample$utilidades[[i]][1])
-#' plot(1:num.gen, utili[1:num.gen], type='l')
+#' plot(newsample)
 #'
 #' @importFrom foreach foreach
 #' @importFrom foreach %dopar%
@@ -63,7 +61,7 @@ JOD <- function(geodata, add.pts, kcontrol, kgrid, num.gen,
         registerDoSNOW(cl)
     }
 
-    stopifnot(elite.size <= gen.size%/%2)
+    stopifnot(elite.size <= gen.size %/% 2)
 
     N <- length(geodata$data)
 
@@ -148,7 +146,17 @@ JOD <- function(geodata, add.pts, kcontrol, kgrid, num.gen,
         children.it[[kk]] <- children
     }
 
-    if(parallel) stopCluster(cl)
+    if (parallel) stopCluster(cl)
 
-    list(children = children.it, utilidades = util.it)
+    utility <- NULL # Utility function evolution
+    for(i in 1:num.gen) utility[i] <- mean(util.it[[i]][1])
+
+    ret <- list(init.pts = geodata$coords,
+                add.pts = add.pts,
+                num.it = num.gen,
+                util.evolution = utility,
+                best.sample = children.it[[num.gen]][[1]]$coords
+    )
+    class(ret) <- 'geodesign.JOD'
+    ret
 }

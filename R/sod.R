@@ -65,12 +65,24 @@
 #'                                         beta = mean(simdata$data),
 #'                                         cov.pars = emv$cov.pars),
 #'                parallel = F)
+#' new.pts.bayes <- SOD(simdata, add.pts, n, util = 'predvar',
+#'                      kcontrol = prior.control(beta.prior = "flat",
+#'                                               sigmasq.prior = "reciprocal",
+#'                                               phi.prior="uniform",
+#'                                               phi.discrete=seq(0,2,l=20),
+#'                                               tausq.rel.prior = "uniform",
+#'                                               tausq.rel.discrete = seq(0, 1, l=20)),
+#'                      parallel = F)
 #'
 #' # Old points and new points
-#' plot(simdata$coords, pch = 16)
+#' par(mfrow = c(1, 2))
+#' plot(simdata$coords, pch = 16, main = 'Classical kriging')
 #' points(new.pts, pch = '+', col = 'red')
+#' plot(simdata$coords, pch = 16, main = 'Bayesian kriging')
+#' points(new.pts.bayes, pch = '+', col = 'red')
+#' par(mfrow = c(1, 1))
 #'
-#' @importFrom parallel makeCluster
+#' @importFrom snow makeCluster
 #' @importFrom doSNOW registerDoSNOW
 #' @importFrom geoR krige.conv
 #' @importFrom geoR as.geodata
@@ -108,8 +120,8 @@ SOD <- function(geodata, add.pts, n = ceiling(sqrt(10*nrow(geodata$coords))),
     if (!(util %in% c('predvar', 'extrprob', 'mixed')))
         stop("Invalid value for util")
 
-    if (!("krige.geoR" %in% class(kcontrol)))
-        stop("Expected `kcontrol` to be a `krige.geoR` object")
+    if (!(class(kcontrol) %in% c("krige.geoR", "prior.geoR")))
+        stop("Expected `kcontrol` to be a `krige.geoR` or `prior.geoR` object")
 
     if (typeof(parallel) != "logical")
         stop("Expected `parallel` to be a logical value")
@@ -130,8 +142,8 @@ SOD <- function(geodata, add.pts, n = ceiling(sqrt(10*nrow(geodata$coords))),
             stop("Expected `shape` to be a SpatialPolygonsDataFrame value")
     }
 
-    if (!is.null(shape)) {
-        # 'shape' should be a SpatialPolygonsDataFrame object
+    if (!is.null(shape)) { # Creates kriging/candidate grid based on the shape-
+        # file if it's provided
         shape.window <- as.owin(shape) # Owin
         initgrid <- gridcentres(shape.window, nx, ny) # List
         initgridP <- SpatialPoints(initgrid) # SpatialPoints
@@ -141,18 +153,16 @@ SOD <- function(geodata, add.pts, n = ceiling(sqrt(10*nrow(geodata$coords))),
     } else {
         box <- bbox(geodata$coords)
         kgrid <- cgrid <- expand.grid(seq(box[1,1], box[1,2], l = nx),
-                             seq(box[2,1], box[2,2], l = ny))
+                                      seq(box[2,1], box[2,2], l = ny))
     }
 
-
+    is.bayes <- class(kcontrol) == "prior.geoR"
 
     #botar um if aqui pra criar malha preditiva, dependendo de se há shapefile
     #botar mensagens para quando está criando malha preditiva, pq demora
     #botar 2 mensagens: criando malha, otimizando
 
     cat("Optimizing...\n")
-
-
 
     if (util == 'predvar') {
 
@@ -165,17 +175,24 @@ SOD <- function(geodata, add.pts, n = ceiling(sqrt(10*nrow(geodata$coords))),
 
             # "Original" kriging (to be compared with krigings at each point)
             capture.output(
-                or.krig <- krige.conv(geodata, locations = kgrid,
-                                     krige = kcontrol)
+                or.krig <- if (is.bayes) {
+                    krige.bayes(geodata, locations = kgrid,
+                                model = model.control(cov.model = "spherical"),
+                                prior = kcontrol)
+                } else {
+                    krige.conv(geodata, locations = kgrid,
+                               krige = kcontrol)
+                }
+
             )
 
             # Checks for common points between existing coords and 'cgrid'
-            m1 <- as.matrix(geodata$coords)
+            m1 <- as.matrix(geodata$coords) # TODO: Remove as.matrix(.) call
             m2 <- as.matrix(cgrid)
-            ptscommon <- NULL
-            cont <-  0
-            cont2 <-  0
-            ptnr <- NULL
+            ptscommon <- NULL # Coordinates of common points
+            cont <-  0        # How many common points exist
+            cont2 <-  0       #
+            ptnr <- NULL      # Index of the common points
             for (i in 1:nrow(m2)) {
                 cont2 <- cont2 + 1
                 for (j in 1:nrow(m1)) {
@@ -199,38 +216,63 @@ SOD <- function(geodata, add.pts, n = ceiling(sqrt(10*nrow(geodata$coords))),
             predvar.util <- NULL
 
             if (cont == 0) { #if there are no points in common
+                cat("cont is = 0\n")
                 predvar.util <- foreach(i = 1:length(cgrid[,1]), .packages = 'geoR', .combine = "c") %dopar% {
                     df.list[[i]] <- rbind(geodata$coords,cgrid[i,])
                     geodata.list[[i]] <- as.geodata(data.frame(cbind(df.list[[i]],values)))
                     capture.output(
-                        krig.list[[i]] <- krige.conv(geodata.list[[i]], locations = kgrid,
-                                                     krige = kcontrol)
+                        krig.list[[i]] <- if (is.bayes) {
+                            krige.bayes(geodata.list[[i]], locations = kgrid,
+                                        model = model.control(cov.model = "spherical"),
+                                        prior = kcontrol)
+                        } else {
+                            krige.conv(geodata.list[[i]], locations = kgrid,
+                                       krige = kcontrol)
+                        }
                     )
-                    predvar.util <- mean(or.krig$krige.var - krig.list[[i]]$krige.var)
+                    predvar.util <- if (is.bayes) {
+                        mean(or.krig$predictive$variance - krig.list[[i]]$predictive$variance)
+                    } else {
+                        mean(or.krig$krige.var - krig.list[[i]]$krige.var)
+                    }
                     df.list[[i]] <- 0
                     krig.list[[i]] <- 0
                     geodata.list[[i]] <- 0
                     predvar.util
 
                 }
+                cat("finished kriging\n")
             }
 
             if (cont > 0) { #if there are points in common
+                cat(sprintf("cont is = %2d\n", cont))
                 predvar.util <- foreach(i = 1:length(cgrid[,1]), .packages = 'geoR', .combine = "c") %dopar% {
                     if (!(i %in% ptnr)) { # if point 'i' is NOT one of the common points
                         df.list[[i]] <- rbind(geodata$coords,cgrid[i,])
                         geodata.list[[i]] <- as.geodata(data.frame(cbind(df.list[[i]],values)))
                         capture.output(
-                            krig.list[[i]] <- krige.conv(geodata.list[[i]], locations = kgrid,
-                                                         krige = kcontrol)
+                            krig.list[[i]] <- if (is.bayes) {
+                                krige.bayes(geodata.list[[i]], locations = kgrid,
+                                            model = model.control(cov.model = "spherical"),
+                                            prior = kcontrol)
+                            } else {
+                                krige.conv(geodata.list[[i]], locations = kgrid,
+                                           krige = kcontrol)
+                            }
                         )
-                        predvar.util <- mean(or.krig$krige.var - krig.list[[i]]$krige.var)
+                        predvar.util <- if (is.bayes) {
+                            mean(or.krig$predictive$variance - krig.list[[i]]$predictive$variance)
+                        } else {
+                            mean(or.krig$krige.var - krig.list[[i]]$krige.var)
+                        }
+
                         df.list[[i]] <- 0
                         krig.list[[i]] <- 0
                         geodata.list[[i]] <- 0
                         predvar.util
                     }
                 }
+                cat("finished kriging\n")
             }
 
 
@@ -258,11 +300,16 @@ SOD <- function(geodata, add.pts, n = ceiling(sqrt(10*nrow(geodata$coords))),
             it.predvar.util[[g]] <- tr.predvar.util
 
             # Optimal sampling location for utility function #1
+            # TODO: Maximum should always equal to one, so just check == 1 (MAY NOT WORK)
             best.pt <- c(best.pt, which(tr.predvar.util == max(tr.predvar.util)))
 
             # Point coordinates and value
             best.coord <- cgrid[best.pt,]
-            best.value <- or.krig$predict[best.pt]
+            best.value <- if (is.bayes) {
+                or.krig$predictive$mean[best.pt]
+            } else {
+                or.krig$predict[best.pt]
+            }
 
             # Merges data with optimal point
             geodata$data <- c(geodata$data, best.value[g])
@@ -284,8 +331,14 @@ SOD <- function(geodata, add.pts, n = ceiling(sqrt(10*nrow(geodata$coords))),
             # "Original" kriging (to be compared with krigings at each point)
 
             capture.output(
-                or.krig <- krige.conv(geodata, locations = kgrid,
-                                     krige = kcontrol)
+                or.krig <- if (is.bayes) {
+                    krige.bayes(geodata, locations = kgrid,
+                                model = model.control(cov.model = "spherical"),
+                                prior = kcontrol)
+                } else {
+                    krige.conv(geodata, locations = kgrid,
+                               krige = kcontrol)
+                }
             )
 
             # Checks for common points between 'coords' and 'cgrid'
@@ -332,11 +385,15 @@ SOD <- function(geodata, add.pts, n = ceiling(sqrt(10*nrow(geodata$coords))),
 
             # Point coordinates and value
             best.coord <- cgrid[best.pt,]
-            best.value <- or.krig$predict[best.pt]
+            best.value <- if (is.bayes) {
+                or.krig$predictive$mean[best.pt]
+            } else {
+                or.krig$predict[best.pt]
+            }
             colnames(best.coord) <- c("x", "y")
 
             # Merges geodata with optimal point
-            geodata$data <- c(geodata$data,best.value[g])
+            geodata$data <- c(geodata$data, best.value[g])
             geodata$coords <- rbind(geodata$coords,best.coord[g,])
             rownames(geodata$coords) <- NULL
             geodata <- as.geodata(cbind(geodata$coords,geodata$data))
@@ -355,8 +412,14 @@ SOD <- function(geodata, add.pts, n = ceiling(sqrt(10*nrow(geodata$coords))),
 
             # "Original" kriging (to be compared with krigings at each point)
             capture.output(
-                or.krig <- krige.conv(geodata, locations = kgrid,
-                                     krige = kcontrol)
+                or.krig <- if (is.bayes) {
+                    krige.bayes(geodata, locations = kgrid,
+                                model = model.control(cov.model = "spherical"),
+                                prior = kcontrol)
+                } else {
+                    krige.conv(geodata, locations = kgrid,
+                               krige = kcontrol)
+                }
             )
 
             #       Checks for common points between existing coords and 'cgrid'
@@ -393,10 +456,20 @@ SOD <- function(geodata, add.pts, n = ceiling(sqrt(10*nrow(geodata$coords))),
                     df.list[[i]] <- rbind(geodata$coords,cgrid[i,])
                     geodata.list[[i]] <- as.geodata(data.frame(cbind(df.list[[i]],values)))
                     capture.output(
-                        krig.list[[i]] <- krige.conv(geodata.list[[i]], locations = kgrid,
-                                                     krige = kcontrol)
+                        krig.list[[i]] <- if (is.bayes) {
+                            krige.bayes(geodata.list[[i]], locations = kgrid,
+                                        model = model.control(cov.model = "spherical"),
+                                        prior = kcontrol)
+                        } else {
+                            krige.conv(geodata.list[[i]], locations = kgrid,
+                                       krige = kcontrol)
+                        }
                     )
-                    predvar.util <- mean(or.krig$krige.var - krig.list[[i]]$krige.var)
+                    predvar.util <- if (is.bayes) {
+                        mean(or.krig$predictive$variance - krig.list[[i]]$predictive$variance)
+                    } else {
+                        mean(or.krig$krige.var - krig.list[[i]]$krige.var)
+                    }
                     df.list[[i]] <- 0
                     krig.list[[i]] <- 0
                     geodata.list[[i]] <- 0
@@ -411,10 +484,20 @@ SOD <- function(geodata, add.pts, n = ceiling(sqrt(10*nrow(geodata$coords))),
                         df.list[[i]] <- rbind(geodata$coords, cgrid[i,])
                         geodata.list[[i]] <- as.geodata(data.frame(cbind(df.list[[i]], values)))
                         capture.output(
-                            krig.list[[i]] <- krige.conv(geodata.list[[i]], locations = kgrid,
-                                                         krige = kcontrol)
+                            krig.list[[i]] <- if (is.bayes) {
+                                krige.bayes(geodata.list[[i]], locations = kgrid,
+                                            model = model.control(cov.model = "spherical"),
+                                            prior = kcontrol)
+                            } else {
+                                krige.conv(geodata.list[[i]], locations = kgrid,
+                                           krige = kcontrol)
+                            }
                         )
-                        predvar.util <- mean(or.krig$krige.var - krig.list[[i]]$krige.var)
+                        predvar.util <- if (is.bayes) {
+                            mean(or.krig$predictive$variance - krig.list[[i]]$predictive$variance)
+                        } else {
+                            mean(or.krig$krige.var - krig.list[[i]]$krige.var)
+                        }
                         df.list[[i]] <- 0
                         krig.list[[i]] <- 0
                         geodata.list[[i]] <- 0
@@ -479,7 +562,11 @@ SOD <- function(geodata, add.pts, n = ceiling(sqrt(10*nrow(geodata$coords))),
 
             # Point coordinates and value
             best.coord <- cgrid[best.pt,]
-            best.value <- or.krig$predict[best.pt]
+            best.value <- if (is.bayes) {
+                or.krig$predictive$mean[best.pt]
+            } else {
+                or.krig$predict[best.pt]
+            }
 
             # Merges data with optimal point
             geodata$data <- c(geodata$data, best.value[g])
@@ -495,6 +582,8 @@ SOD <- function(geodata, add.pts, n = ceiling(sqrt(10*nrow(geodata$coords))),
     if (util == 'predvar') util.evolution <- it.predvar.util else
         if (util == 'extrprob') util.evolution <- it.extrprob.util else
             util.evolution <- it.mixed.util
+
+    if (parallel) stopCluster(cl)
 
     nc <- nrow(geodata$coords)
     geodata$coords[(nc - add.pts + 1):nc,]
